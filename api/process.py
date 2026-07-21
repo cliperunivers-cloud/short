@@ -1,47 +1,48 @@
-from flask import Flask, request, jsonify
 import requests
 import os
+import json
+from http.server import BaseHTTPRequestHandler
 
-app = Flask(__name__)
+class handler(BaseHTTPRequestHandler):
+    def do_OPTIONS(self): # Handle CORS Preflight
+        self.send_response(200)
+        self.send_header('Access-Control-Allow-Origin', '*')
+        self.send_header('Access-Control-Allow-Methods', 'POST, OPTIONS')
+        self.send_header('Access-Control-Allow-Headers', 'Content-Type')
+        self.end_headers()
 
-@app.route('/process', methods=['POST', 'OPTIONS'])
-def process():
-    # Handle CORS buat Flutter
-    if request.method == 'OPTIONS':
-        return '', 200, {
-            'Access-Control-Allow-Origin': '*',
-            'Access-Control-Allow-Methods': 'POST, OPTIONS',
-            'Access-Control-Allow-Headers': 'Content-Type'
-        }
+    def do_POST(self):
+        try:
+            colab_url = os.environ.get('COLAB_URL')
+            if not colab_url:
+                self.send_error(500, "COLAB_URL belum diset di Vercel")
+                return
 
-    try:
-        colab_url = os.environ.get('COLAB_URL')
-        
-        if not colab_url:
-            return jsonify({'error': 'COLAB_URL belum diset di Vercel'}), 500
+            content_len = int(self.headers.get('Content-Length', 0))
+            post_body = self.rfile.read(content_len)
 
-        data = request.get_json()
-        youtube_url = data.get('url')
-        jumlah_short = data.get('jumlah', 3)
+            # HEADER PENTING BIAR LEWAT HALAMAN NGROK
+            headers = {
+                "ngrok-skip-browser-warning": "true",
+                "Content-Type": "application/json"
+            }
 
-        if not youtube_url:
-            return jsonify({'error': 'URL YouTube kosong'}), 400
+            r = requests.post(
+                f"{colab_url}/api/process", 
+                data=post_body, 
+                headers=headers, 
+                timeout=600 # 10 menit, karena render video lama
+            )
 
-        r = requests.post(
-            f"{colab_url}/process", 
-            json={'url': youtube_url, 'jumlah': jumlah_short}, 
-            timeout=600
-        )
+            self.send_response(r.status_code)
+            self.send_header('Content-type', 'application/json')
+            self.send_header('Access-Control-Allow-Origin', '*') # Kasih izin ke Flutter
+            self.end_headers()
+            self.wfile.write(r.content)
 
-        return jsonify(r.json()), r.status_code, {
-            'Access-Control-Allow-Origin': '*'
-        }
-
-    except requests.exceptions.Timeout:
-        return jsonify({'error': 'Timeout. Colab kelamaan proses'}), 504
-    except Exception as e:
-        return jsonify({'error': str(e)}), 500
-
-
-# INI WAJIB BUAT VERCEL SERVERLESS
-handler = app
+        except Exception as e:
+            self.send_response(500)
+            self.send_header('Content-type', 'application/json')
+            self.send_header('Access-Control-Allow-Origin', '*')
+            self.end_headers()
+            self.wfile.write(json.dumps({'error': str(e)}).encode())
