@@ -1,25 +1,57 @@
-export default async function handler(req, res) {
-  // CORS
-  res.setHeader('Access-Control-Allow-Credentials', true);
-  res.setHeader('Access-Control-Allow-Origin', '*');
-  res.setHeader('Access-Control-Allow-Methods', 'GET,OPTIONS,PATCH,DELETE,POST,PUT');
-  res.setHeader('Access-Control-Allow-Headers', 'X-CSRF-Token, X-Requested-With, Accept, Accept-Version, Content-Length, Content-MD5, Content-Type, Date, X-Api-Version');
+from flask import Flask, request, jsonify
+import requests
+import os
 
-  if (req.method === 'OPTIONS') {
-    res.status(200).end();
-    return;
-  }
-  
-  if (req.method !== 'POST') {
-    return res.status(405).json({ error: 'Method Not Allowed' });
-  }
+app = Flask(__name__)
 
-  try {
-    const { url } = req.body;
-    if (!url) {
-      return res.status(400).json({ error: 'URL YouTube wajib diisi' });
-    }
+@app.route('/process', methods=['POST', 'OPTIONS'])
+def process():
+    # Buat handle CORS dari Flutter
+    if request.method == 'OPTIONS':
+        return '', 200, {
+            'Access-Control-Allow-Origin': '*',
+            'Access-Control-Allow-Methods': 'POST, OPTIONS',
+            'Access-Control-Allow-Headers': 'Content-Type'
+        }
 
+    try:
+        # Ambil URL Colab dari Environment Variables Vercel
+        colab_url = os.environ.get('COLAB_URL')
+        
+        if not colab_url:
+            return jsonify({'error': 'COLAB_URL belum diset di Vercel'}), 500
+
+        # Ambil data dari Flutter
+        data = request.get_json()
+        youtube_url = data.get('url')
+        jumlah_short = data.get('jumlah', 3)
+
+        if not youtube_url:
+            return jsonify({'error': 'URL YouTube kosong'}), 400
+
+        # Kirim ke Colab/ngrok
+        r = requests.post(
+            f"{colab_url}/process", 
+            json={
+                'url': youtube_url,
+                'jumlah': jumlah_short
+            }, 
+            timeout=600  # 10 menit, karena proses yt-dlp lama
+        )
+
+        # Balikin hasil dari Colab ke Flutter
+        return jsonify(r.json()), r.status_code, {
+            'Access-Control-Allow-Origin': '*'
+        }
+
+    except requests.exceptions.Timeout:
+        return jsonify({'error': 'Timeout. Colab kelamaan proses'}), 504
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+# Ini wajib buat Vercel Serverless
+def handler(req, res):
+    return app(req, res)
     const COLAB_URL = process.env.COLAB_URL;
     if (!COLAB_URL) {
       return res.status(500).json({ error: 'COLAB_URL belum diset di Vercel' });
