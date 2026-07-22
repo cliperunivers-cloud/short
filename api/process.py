@@ -1,7 +1,15 @@
+
 import requests
 import os
 import json
+import threading # TAMBAH INI
 from http.server import BaseHTTPRequestHandler
+
+def kirim_ke_colab(colab_url, body):
+    headers = {"ngrok-skip-browser-warning": "true", "Content-Type": "application/json"}
+    try:
+        requests.post(f"{colab_url}/api/process", data=body, headers=headers, timeout=600)
+    except: pass # Biarin jalan di belakang
 
 class handler(BaseHTTPRequestHandler):
     def do_OPTIONS(self):
@@ -12,38 +20,17 @@ class handler(BaseHTTPRequestHandler):
         self.end_headers()
 
     def do_POST(self):
-        try:
-            colab_url = os.environ.get('COLAB_URL')
-            if not colab_url:
-                self._send(500, {'error': 'COLAB_URL belum diset di Vercel'})
-                return
+        colab_url = os.environ.get('COLAB_URL')
+        content_len = int(self.headers.get('Content-Length', 0))
+        post_body = self.rfile.read(content_len)
 
-            content_len = int(self.headers.get('Content-Length', 0))
-            post_body = self.rfile.read(content_len)
+        # JALANKAN DI THREAD BIAR GA NUNGGU
+        thread = threading.Thread(target=kirim_ke_colab, args=(colab_url, post_body))
+        thread.start()
 
-            headers = {
-                "ngrok-skip-browser-warning": "true", # Biar lewatin halaman ngrok
-                "Content-Type": "application/json"
-            }
-
-            # TIMEOUT 10 MENIT KARENA RENDER VIDEO LAMA
-            r = requests.post(
-                f"{colab_url}/api/process", 
-                data=post_body, 
-                headers=headers, 
-                timeout=600
-            )
-
-            self._send(r.status_code, r.json())
-
-        except requests.exceptions.Timeout:
-            self._send(504, {'error': 'Colab kelamaan. Coba video yg lebih pendek'})
-        except Exception as e:
-            self._send(500, {'error': str(e)})
-    
-    def _send(self, code, data):
-        self.send_response(code)
+        # LANGSUNG BALAS KE FLUTTER
+        self.send_response(202) # 202 = Accepted
         self.send_header('Content-type', 'application/json')
         self.send_header('Access-Control-Allow-Origin', '*')
         self.end_headers()
-        self.wfile.write(json.dumps(data).encode())
+        self.wfile.write(json.dumps({'status': 'diproses', 'message': 'Sedang membuat shorts di Colab. Cek Colab ya'}).encode())
